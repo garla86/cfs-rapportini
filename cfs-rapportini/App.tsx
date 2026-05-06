@@ -3,7 +3,12 @@ import { Logo } from './components/Logo';
 import DailyReportForm from './components/DailyReportForm';
 import { DailyReport } from './types';
 import { generateDailyPdf } from './services/pdfGenerator';
-import { Trash2, Copy, Calendar, User, FileDown, CheckCircle, Mail, Archive, FileText, Camera, Download, Upload, Lock, AlertCircle, RefreshCw, ChevronRight, Send, MessageCircle, Plus } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { motion, AnimatePresence } from 'motion/react';
+import { sounds } from './utils/sounds';
+import { Trash2, Copy, Calendar, User, FileDown, CheckCircle, Mail, Archive, FileText, Camera, Download, Upload, Lock, AlertCircle, RefreshCw, ChevronRight, Send, MessageCircle, Plus, Edit2 } from 'lucide-react';
 
 type ViewMode = 'form' | 'history' | 'archive';
 
@@ -16,6 +21,9 @@ const App: React.FC = () => {
   const [notification, setNotification] = useState<string | null>(null);
   const [closedSessionDays, setClosedSessionDays] = useState<string[]>([]);
   const [confirmCloseDate, setConfirmCloseDate] = useState<string | null>(null);
+  const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [reportToEdit, setReportToEdit] = useState<DailyReport | null>(null);
   
   const backupInputRef = useRef<HTMLInputElement>(null);
 
@@ -34,22 +42,41 @@ const App: React.FC = () => {
     localStorage.setItem('cfs_sent_days', JSON.stringify(sentDays));
   }, [sentDays]);
 
+  const triggerSuccessAnimation = (message: string) => {
+    setSuccessMessage(message);
+    setShowSuccessOverlay(true);
+    sounds.playSuccess();
+    setTimeout(() => {
+      setShowSuccessOverlay(false);
+    }, 2000);
+  };
+
   const showToast = (message: string, duration = 3000) => {
     setNotification(message);
     setTimeout(() => setNotification(null), duration);
   };
 
   const handleSaveReport = (data: Omit<DailyReport, 'id' | 'createdAt'>) => {
-    const newReport: DailyReport = {
-      ...data,
-      id: crypto.randomUUID(),
-      createdAt: Date.now()
-    };
-    const updatedReports = [newReport, ...reports];
-    setReports(updatedReports);
-    localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-    showToast('Intervento salvato correttamente!');
+    if (reportToEdit) {
+      const updatedReports = reports.map(r => r.id === reportToEdit.id ? { ...data, id: r.id, createdAt: r.createdAt } : r);
+      setReports(updatedReports);
+      localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
+      setReportToEdit(null);
+      setCurrentView('history');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      triggerSuccessAnimation('Intervento aggiornato!');
+    } else {
+      const newReport: DailyReport = {
+        ...data,
+        id: crypto.randomUUID(),
+        createdAt: Date.now()
+      };
+      const updatedReports = [newReport, ...reports];
+      setReports(updatedReports);
+      localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      triggerSuccessAnimation('Intervento salvato!');
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -58,6 +85,7 @@ const App: React.FC = () => {
       setReports(updated);
       localStorage.setItem('cfs_reports', JSON.stringify(updated));
       showToast('Intervento eliminato.');
+      sounds.playDelete();
     }
   };
 
@@ -84,17 +112,44 @@ const App: React.FC = () => {
   const handleConfirmCloseDay = () => {
     if (confirmCloseDate) {
       setClosedSessionDays(prev => [...prev, confirmCloseDate]);
-      showToast('Giornata chiusa! I PDF sono pronti in Archivio.');
       setConfirmCloseDate(null);
+      triggerSuccessAnimation('Giornata Chiusa!');
     }
   };
 
-  const handleDownloadDay = (date: string) => {
+  const handleDownloadDay = async (date: string) => {
     const dayReports = groupedReports[date];
     if (dayReports && dayReports.length > 0) {
       const technician = dayReports[0].technicianName;
-      generateDailyPdf(dayReports, date, technician);
-      showToast('Download avviato...');
+      if (Capacitor.isNativePlatform()) {
+        showToast('Download avviato...');
+        try {
+          // @ts-ignore
+          const pdfResults = generateDailyPdf(dayReports, date, technician, { returnBlob: true });
+          if (Array.isArray(pdfResults)) {
+            let saved = 0;
+            for (const res of pdfResults) {
+              const base64Data = await new Promise<string>((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                reader.readAsDataURL(res.blob);
+              });
+              await Filesystem.writeFile({
+                path: res.fileName,
+                data: base64Data,
+                directory: Directory.Documents
+              });
+              saved++;
+            }
+            alert(`Scaricati ${saved} file nella cartella Documenti del dispositivo.`);
+          }
+        } catch (e: any) {
+          alert("Errore salvataggio file: " + (e?.message || e));
+        }
+      } else {
+        generateDailyPdf(dayReports, date, technician);
+        showToast('Download avviato...');
+      }
     }
   };
 
@@ -161,44 +216,142 @@ const App: React.FC = () => {
     setIsSharing(true);
     showToast('Generazione file...', 2000);
     try {
-      const filesToShare = await prepareFilesForSharing();
-      if (filesToShare.length === 0) { alert("Errore generazione."); setIsSharing(false); return; }
-
-      if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
-        try {
-          await navigator.share({ files: filesToShare, title: 'Rapportini CFS', text: `Allegati per: ${selectedDays.join(', ')}` });
-          showToast('Inviato!'); markAsSent(selectedDays);
-        } catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
-      } else {
-        downloadFilesLocally(filesToShare);
-        const subject = encodeURIComponent("Rapportini CFS");
-        const body = encodeURIComponent(`Rapportini per: ${selectedDays.join(', ')}.`);
-        window.location.href = `mailto:?subject=${subject}&body=${body}`;
-        alert("File scaricati. Allegali all'email.");
+      if (Capacitor.isNativePlatform()) {
+        const fileUris: string[] = [];
+        for (const date of selectedDays) {
+          const dayReports = groupedReports[date];
+          if (dayReports && dayReports.length > 0) {
+            const technician = dayReports[0].technicianName;
+            // @ts-ignore
+            const pdfResults = generateDailyPdf(dayReports, date, technician, { returnBlob: true });
+            if (Array.isArray(pdfResults)) {
+              for (const res of pdfResults) {
+                const base64Data = await new Promise<string>((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                  reader.readAsDataURL(res.blob);
+                });
+                const written = await Filesystem.writeFile({
+                  path: res.fileName,
+                  data: base64Data,
+                  directory: Directory.Cache
+                });
+                fileUris.push(written.uri);
+              }
+            }
+            for (let i = 0; i < dayReports.length; i++) {
+              if (dayReports[i].photos) {
+                for (let p = 0; p < dayReports[i].photos!.length; p++) {
+                  const photoDataUrl = dayReports[i].photos![p];
+                  const base64Data = photoDataUrl.split(',')[1];
+                  const name = `Foto_${technician.replace(/\\s+/g, '_')}_${date}_${i + 1}_${p + 1}.jpg`;
+                  const written = await Filesystem.writeFile({
+                    path: name,
+                    data: base64Data,
+                    directory: Directory.Cache
+                  });
+                  fileUris.push(written.uri);
+                }
+              }
+            }
+          }
+        }
+        if (fileUris.length === 0) { alert("Errore generazione."); setIsSharing(false); return; }
+        await Share.share({
+          dialogTitle: 'Condividi Rapportini',
+          files: fileUris
+        });
+        showToast('Fatto!');
         markAsSent(selectedDays);
+      } else {
+        const filesToShare = await prepareFilesForSharing();
+        if (filesToShare.length === 0) { alert("Errore generazione."); setIsSharing(false); return; }
+
+        if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
+          try {
+            await navigator.share({ files: filesToShare, title: 'Rapportini CFS', text: `Allegati per: ${selectedDays.join(', ')}` });
+            showToast('Inviato!'); markAsSent(selectedDays);
+          } catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
+        } else {
+          downloadFilesLocally(filesToShare);
+          const subject = encodeURIComponent("Rapportini CFS");
+          const body = encodeURIComponent(`Rapportini per: ${selectedDays.join(', ')}.`);
+          window.location.href = `mailto:?subject=${subject}&body=${body}`;
+          alert("File scaricati. Allegali all'email.");
+          markAsSent(selectedDays);
+        }
       }
-    } catch { alert("Errore invio."); } finally { setIsSharing(false); }
+    } catch(e: any) { alert("Errore invio: " + (e?.message || e)); } finally { setIsSharing(false); }
   };
 
   const handleSendWhatsApp = async () => {
     if (selectedDays.length === 0) return;
     setIsSharing(true);
-    showToast('Preparazione WhatsApp...', 2000);
+    showToast('Preparazione...', 2000);
     try {
-      const files = await prepareFilesForSharing();
       const msg = `Rapportini per: ${selectedDays.join(', ')}`;
-      if (files.length === 0) { alert("Errore."); setIsSharing(false); return; }
-
-      if (navigator.canShare && navigator.canShare({ files })) {
-         try { await navigator.share({ files, text: msg }); showToast('Fatto!'); markAsSent(selectedDays); }
-         catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
+      if (Capacitor.isNativePlatform()) {
+        const fileUris: string[] = [];
+        for (const date of selectedDays) {
+          const dayReports = groupedReports[date];
+          if (dayReports && dayReports.length > 0) {
+            const technician = dayReports[0].technicianName;
+            // @ts-ignore
+            const pdfResults = generateDailyPdf(dayReports, date, technician, { returnBlob: true });
+            if (Array.isArray(pdfResults)) {
+              for (const res of pdfResults) {
+                const base64Data = await new Promise<string>((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+                  reader.readAsDataURL(res.blob);
+                });
+                const written = await Filesystem.writeFile({
+                  path: res.fileName,
+                  data: base64Data,
+                  directory: Directory.Cache
+                });
+                fileUris.push(written.uri);
+              }
+            }
+            for (let i = 0; i < dayReports.length; i++) {
+              if (dayReports[i].photos) {
+                for (let p = 0; p < dayReports[i].photos!.length; p++) {
+                  const photoDataUrl = dayReports[i].photos![p];
+                  const base64Data = photoDataUrl.split(',')[1];
+                  const name = `Foto_${technician.replace(/\s+/g, '_')}_${date}_${i + 1}_${p + 1}.jpg`;
+                  const written = await Filesystem.writeFile({
+                    path: name,
+                    data: base64Data,
+                    directory: Directory.Cache
+                  });
+                  fileUris.push(written.uri);
+                }
+              }
+            }
+          }
+        }
+        if (fileUris.length === 0) { alert("Errore generazione."); setIsSharing(false); return; }
+        await Share.share({
+          dialogTitle: 'Condividi su WhatsApp',
+          files: fileUris
+        });
+        showToast('Fatto!');
+        markAsSent(selectedDays);
       } else {
-         downloadFilesLocally(files);
-         window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
-         alert("File scaricati. Trascinali su WhatsApp.");
-         markAsSent(selectedDays);
+        const files = await prepareFilesForSharing();
+        if (files.length === 0) { alert("Errore."); setIsSharing(false); return; }
+
+        if (navigator.canShare && navigator.canShare({ files })) {
+           try { await navigator.share({ files, text: msg }); showToast('Fatto!'); markAsSent(selectedDays); }
+           catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
+        } else {
+           downloadFilesLocally(files);
+           window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+           alert("File scaricati. Trascinali su WhatsApp.");
+           markAsSent(selectedDays);
+        }
       }
-    } catch { alert("Errore WhatsApp."); } finally { setIsSharing(false); }
+    } catch(e: any) { alert("Errore Condivisione: " + (e?.message || e)); } finally { setIsSharing(false); }
   };
 
   const handleExportData = () => {
@@ -241,7 +394,7 @@ const App: React.FC = () => {
   // Visual Components helpers
   const TabButton = ({ id, label, icon: Icon }: any) => (
     <button 
-      onClick={() => setCurrentView(id)}
+      onClick={() => { sounds.playPop(); setCurrentView(id); }}
       className={`relative px-4 py-2 rounded-full text-sm font-medium transition-all duration-300 flex items-center gap-2 ${
         currentView === id 
           ? 'text-cfs-blue bg-white shadow-md shadow-gray-200 ring-1 ring-gray-100' 
@@ -274,22 +427,27 @@ const App: React.FC = () => {
       </header>
 
       {/* Main Content */}
-      <main className="flex-grow max-w-4xl w-full mx-auto p-4 md:p-6 space-y-8">
+      <main className="flex-grow max-w-4xl w-full mx-auto p-4 md:p-6 space-y-8 overflow-hidden">
+        <AnimatePresence mode="wait">
         
         {/* VIEW: FORM */}
         {currentView === 'form' && (
-          <div className="max-w-2xl mx-auto animate-fade-in-up">
+          <motion.div key="form" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2 }} className="max-w-2xl mx-auto">
             <div className="mb-8 text-center">
               <h1 className="font-display text-3xl font-bold text-gray-800 mb-2">Nuovo Rapporto</h1>
               <p className="text-gray-500">Compila i dettagli o usa l'AI per velocizzare.</p>
             </div>
-            <DailyReportForm onSubmit={handleSaveReport} />
-          </div>
+            <DailyReportForm 
+              onSubmit={handleSaveReport} 
+              initialData={reportToEdit || undefined}
+              onCancelEdit={reportToEdit ? () => { setReportToEdit(null); setCurrentView('history'); window.scrollTo({ top: 0, behavior: 'smooth' }); } : undefined}
+            />
+          </motion.div>
         )}
 
         {/* VIEW: HISTORY */}
         {currentView === 'history' && (
-          <div className="animate-fade-in-up space-y-6">
+          <motion.div key="history" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2 }} className="space-y-6">
              <div className="mb-4">
               <h1 className="font-display text-3xl font-bold text-gray-800">I tuoi Interventi</h1>
               <p className="text-gray-500">Cronologia completa delle attività svolte.</p>
@@ -334,9 +492,17 @@ const App: React.FC = () => {
                         </button>
                       </div>
 
-                      <div className="p-2 space-y-2 bg-gray-50/30">
+                      <div className="p-2 space-y-2 bg-gray-50/30 overflow-hidden">
+                        <AnimatePresence>
                         {groupedReports[date].map((report) => (
-                          <div key={report.id} className="bg-white p-4 rounded-xl border border-gray-100 hover:border-cfs-blue/30 transition-all group">
+                          <motion.div 
+                            key={report.id} 
+                            initial={{ opacity: 0, height: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, height: 'auto', scale: 1 }}
+                            exit={{ opacity: 0, height: 0, scale: 0.9, marginTop: 0, marginBottom: 0, padding: 0, border: 0 }}
+                            transition={{ duration: 0.2 }}
+                            className="bg-white p-4 rounded-xl border border-gray-100 hover:border-cfs-blue/30 transition-all group overflow-hidden"
+                          >
                             <div className="flex justify-between items-start mb-3">
                               <div className="flex items-start gap-3">
                                  <div className={`mt-1 w-2 h-2 rounded-full ${report.workType === 'ordinary' ? 'bg-cfs-blue' : report.workType === 'on_call' ? 'bg-cfs-orange' : 'bg-purple-500'}`} />
@@ -355,25 +521,27 @@ const App: React.FC = () => {
                                <div className="flex gap-2">
                                  {report.photos && report.photos.length > 0 && <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-md flex items-center gap-1"><Camera className="w-3 h-3"/> {report.photos.length}</span>}
                                </div>
-                               <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <button onClick={() => copyToClipboard(report)} className="p-2 hover:bg-blue-50 text-cfs-blue rounded-lg"><Copy className="w-4 h-4" /></button>
-                                  <button onClick={() => handleDelete(report.id)} className="p-2 hover:bg-red-50 text-red-500 rounded-lg"><Trash2 className="w-4 h-4" /></button>
-                               </div>
+                              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                 <button onClick={() => { setReportToEdit(report); setCurrentView('form'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} className="p-2 hover:bg-green-50 text-green-600 rounded-lg"><Edit2 className="w-4 h-4" /></button>
+                                 <button onClick={() => copyToClipboard(report)} className="p-2 hover:bg-blue-50 text-cfs-blue rounded-lg"><Copy className="w-4 h-4" /></button>
+                                 <button onClick={() => handleDelete(report.id)} className="p-2 hover:bg-red-50 text-red-500 rounded-lg"><Trash2 className="w-4 h-4" /></button>
+                              </div>
                             </div>
-                          </div>
+                          </motion.div>
                         ))}
+                        </AnimatePresence>
                       </div>
                     </div>
                   );
                 })}
               </div>
             )}
-          </div>
+          </motion.div>
         )}
 
         {/* VIEW: ARCHIVE */}
         {currentView === 'archive' && (
-           <div className="animate-fade-in-up space-y-8">
+           <motion.div key="archive" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }} transition={{ duration: 0.2 }} className="space-y-8">
              <div className="flex flex-col md:flex-row justify-between items-end gap-4">
                 <div>
                   <h1 className="font-display text-3xl font-bold text-gray-800">Archivio</h1>
@@ -483,8 +651,9 @@ const App: React.FC = () => {
                  </div>
                </div>
              )}
-           </div>
+           </motion.div>
         )}
+        </AnimatePresence>
       </main>
 
       {/* Footer */}
@@ -512,12 +681,51 @@ const App: React.FC = () => {
       )}
 
       {/* Modern Toast */}
+      <AnimatePresence>
       {notification && (
-        <div className="fixed top-24 left-1/2 -translate-x-1/2 glass-card px-6 py-3 rounded-full shadow-xl z-50 flex items-center gap-3 animate-scale-in border-l-4 border-l-green-500">
+        <motion.div 
+          initial={{ opacity: 0, y: -20, x: '-50%' }}
+          animate={{ opacity: 1, y: 0, x: '-50%' }}
+          exit={{ opacity: 0, y: -20, x: '-50%' }}
+          className="fixed top-24 left-1/2 glass-card px-6 py-3 rounded-full shadow-xl z-50 flex items-center gap-3 border-l-4 border-l-green-500"
+        >
           <CheckCircle className="w-5 h-5 text-green-500" />
           <span className="font-medium text-sm text-gray-700">{notification}</span>
-        </div>
+        </motion.div>
       )}
+      </AnimatePresence>
+
+      {/* Professional Success Overlay */}
+      <AnimatePresence>
+        {showSuccessOverlay && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-900/40 backdrop-blur-sm"
+          >
+            <motion.div
+              initial={{ scale: 0.8, y: 20, opacity: 0 }}
+              animate={{ scale: 1, y: 0, opacity: 1 }}
+              exit={{ scale: 0.9, y: 10, opacity: 0 }}
+              transition={{ type: "spring", damping: 20, stiffness: 300 }}
+              className="bg-white p-8 rounded-3xl shadow-2xl flex flex-col items-center justify-center min-w-[280px]"
+            >
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ type: "spring", damping: 12, stiffness: 200, delay: 0.1 }}
+                className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mb-6"
+              >
+                <CheckCircle className="w-10 h-10 text-green-500" strokeWidth={3} />
+              </motion.div>
+              <h2 className="text-xl font-display font-bold text-gray-800 text-center">
+                {successMessage}
+              </h2>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
