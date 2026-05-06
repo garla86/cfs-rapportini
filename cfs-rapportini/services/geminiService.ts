@@ -1,31 +1,19 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { SmartExtractResponse } from "../types";
 
-// Support both standard process.env (Create React App/Node) and Vite (import.meta.env)
-// Note: In Vite, env vars must start with VITE_ to be exposed to the client
-const getApiKey = () => {
-  // @ts-ignore
-  if (typeof import.meta !== 'undefined' && import.meta.env) {
-    // @ts-ignore
-    return import.meta.env.VITE_API_KEY || import.meta.env.API_KEY;
-  }
-  return process.env.API_KEY || process.env.VITE_API_KEY || '';
-};
-
-const apiKey = getApiKey();
-
 // Initialize only if key exists, otherwise we handle errors gracefully in the UI
+const apiKey = process.env.GEMINI_API_KEY;
 const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export const parseInterventionText = async (text: string): Promise<SmartExtractResponse | null> => {
   if (!ai) {
-    console.warn("Gemini API Key is missing. Please set VITE_API_KEY in your environment.");
+    alert("API Key di Gemini non configurata nel sistema.");
     return null;
   }
 
   try {
     const response = await ai.models.generateContent({
-      model: "gemini-1.5-flash", // Using 1.5-flash as it is stable and cost-effective for this task
+      model: "gemini-2.5-flash", 
       contents: `Analizza il seguente testo descrittivo di un intervento tecnico ed estrai i dati strutturati.
       
       Testo input: "${text}"

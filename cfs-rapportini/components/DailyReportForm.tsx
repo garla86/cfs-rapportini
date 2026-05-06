@@ -1,49 +1,42 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DailyReport, WorkType } from '../types';
-import { parseInterventionText } from '../services/geminiService';
-import { Loader2, Mic, Sparkles, Save, Clock, MapPin, User, FileText, Briefcase, Truck, Camera, X, Image as ImageIcon, Check } from 'lucide-react';
+import { Loader2, Sparkles, Save, Clock, MapPin, User, FileText, Briefcase, Truck, Camera, X, Image as ImageIcon, Check } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { sounds } from '../utils/sounds';
 
 interface DailyReportFormProps {
   onSubmit: (report: Omit<DailyReport, 'id' | 'createdAt'>) => void;
+  initialData?: DailyReport;
+  onCancelEdit?: () => void;
 }
 
-const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
-  const [technicianName, setTechnicianName] = useState('');
-  const [location, setLocation] = useState('');
-  const [description, setDescription] = useState('');
-  const [workType, setWorkType] = useState<WorkType>('ordinary');
-  const [interventionHours, setInterventionHours] = useState<number | ''>('');
-  const [travelHours, setTravelHours] = useState<number | ''>('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [photos, setPhotos] = useState<string[]>([]);
+const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit, initialData, onCancelEdit }) => {
+  const [technicianName, setTechnicianName] = useState(initialData?.technicianName || '');
+  const [location, setLocation] = useState(initialData?.location || '');
+  const [description, setDescription] = useState(initialData?.description || '');
+  const [workType, setWorkType] = useState<WorkType>(initialData?.workType || 'ordinary');
+  const [interventionHours, setInterventionHours] = useState<number | ''>(initialData?.interventionHours || '');
+  const [travelHours, setTravelHours] = useState<number | ''>(initialData?.travelHours || '');
+  const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
+  const [photos, setPhotos] = useState<string[]>(initialData?.photos || []);
   
-  // AI State
-  const [smartInput, setSmartInput] = useState('');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showSmartInput, setShowSmartInput] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const savedName = localStorage.getItem('cfs_last_tech_name');
-    if (savedName) setTechnicianName(savedName);
-  }, []);
-
-  const handleSmartAnalyze = async () => {
-    if (!smartInput.trim()) return;
-    setIsAnalyzing(true);
-    const result = await parseInterventionText(smartInput);
-    setIsAnalyzing(false);
-
-    if (result) {
-      if (result.technicianName) setTechnicianName(result.technicianName);
-      if (result.location) setLocation(result.location);
-      if (result.description) setDescription(result.description);
-      if (result.workType) setWorkType(result.workType);
-      if (result.interventionHours) setInterventionHours(result.interventionHours);
-      if (result.travelHours) setTravelHours(result.travelHours);
-      setShowSmartInput(false);
+    if (initialData) {
+      setTechnicianName(initialData.technicianName);
+      setLocation(initialData.location);
+      setDescription(initialData.description);
+      setWorkType(initialData.workType);
+      setInterventionHours(initialData.interventionHours);
+      setTravelHours(initialData.travelHours);
+      setDate(initialData.date);
+      setPhotos(initialData.photos || []);
+    } else {
+      const savedName = localStorage.getItem('cfs_last_tech_name');
+      if (savedName) setTechnicianName(savedName);
     }
-  };
+  }, [initialData]);
 
   const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -113,7 +106,6 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
     setDescription('');
     setInterventionHours('');
     setTravelHours('');
-    setSmartInput('');
     setPhotos([]);
   };
 
@@ -123,47 +115,6 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
 
   return (
     <div className="space-y-6 animate-fade-in-up">
-      
-      {/* AI Assistant Banner */}
-      <div className="glass-card rounded-2xl overflow-hidden border border-indigo-100 shadow-lg shadow-indigo-500/5">
-        <div className="bg-gradient-to-r from-indigo-500 to-cfs-blue p-4 flex justify-between items-center text-white">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-5 h-5 animate-pulse-soft" />
-            <h2 className="font-display font-semibold">Assistente Smart</h2>
-          </div>
-          <button 
-            onClick={() => setShowSmartInput(!showSmartInput)}
-            className="text-xs bg-white/20 hover:bg-white/30 backdrop-blur-md text-white px-3 py-1.5 rounded-full transition-all"
-          >
-            {showSmartInput ? 'Chiudi' : 'Apri'}
-          </button>
-        </div>
-        
-        {showSmartInput && (
-          <div className="p-5 bg-white animate-scale-in origin-top">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Descrivi l'intervento
-            </label>
-            <div className="relative">
-              <textarea
-                value={smartInput}
-                onChange={(e) => setSmartInput(e.target.value)}
-                placeholder="Es: Ho eseguito un intervento straordinario presso la sede centrale, riparazione tubatura per 3 ore."
-                className="w-full p-4 pr-12 bg-indigo-50/50 border border-indigo-100 rounded-xl text-sm focus:ring-2 focus:ring-indigo-200 outline-none resize-none h-24"
-              />
-              <button
-                onClick={handleSmartAnalyze}
-                disabled={isAnalyzing || !smartInput}
-                className="absolute bottom-3 right-3 bg-cfs-blue hover:bg-blue-700 text-white p-2 rounded-lg disabled:opacity-50 transition-colors shadow-md"
-              >
-                {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-gray-400 mt-2 italic">L'IA compilerà il modulo per te.</p>
-          </div>
-        )}
-      </div>
-
       <form onSubmit={handleSubmit} className="space-y-6">
         
         {/* SECTION 1: Anagrafica */}
@@ -212,7 +163,7 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
               <button
                 key={type.id}
                 type="button"
-                onClick={() => setWorkType(type.id as WorkType)}
+                onClick={() => { sounds.playPop(); setWorkType(type.id as WorkType); }}
                 className={`
                   relative p-4 rounded-xl border-2 transition-all duration-300 flex flex-col items-center gap-2
                   ${workType === type.id 
@@ -223,13 +174,18 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
                   }
                 `}
               >
+                <AnimatePresence>
                 {workType === type.id && (
-                  <div className={`absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px]
+                  <motion.div 
+                    initial={{ scale: 0 }} animate={{ scale: 1 }} exit={{ scale: 0 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 25 }}
+                    className={`absolute top-2 right-2 w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px]
                     ${type.id === 'ordinary' ? 'bg-cfs-blue' : type.id === 'on_call' ? 'bg-cfs-orange' : 'bg-purple-600'}
                   `}>
                     <Check className="w-3 h-3" />
-                  </div>
+                  </motion.div>
                 )}
+                </AnimatePresence>
                 <type.icon className="w-6 h-6" />
                 <span className="font-semibold text-sm">{type.label}</span>
               </button>
@@ -249,8 +205,14 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
                    <span className="absolute right-3 top-3.5 text-gray-400 font-bold text-sm">h</span>
                 </div>
              </div>
+             <AnimatePresence>
              {workType === 'on_call' && (
-               <div className="animate-fade-in-up">
+               <motion.div 
+                 initial={{ opacity: 0, height: 0 }} 
+                 animate={{ opacity: 1, height: 'auto' }} 
+                 exit={{ opacity: 0, height: 0 }} 
+                 className="overflow-hidden"
+               >
                  <label className={`${labelClass} text-cfs-orange`}>Ore Viaggio</label>
                  <div className="relative">
                    <input 
@@ -261,8 +223,9 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
                    />
                    <span className="absolute right-3 top-3.5 text-cfs-orange font-bold text-sm">h</span>
                  </div>
-               </div>
+               </motion.div>
              )}
+             </AnimatePresence>
           </div>
         </div>
 
@@ -277,14 +240,16 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
 
           <div className="mb-6">
             <label className={labelClass}>Descrizione Lavoro</label>
-            <textarea
-              required
-              rows={4}
-              placeholder="Descrizione dettagliata..."
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className={inputClass}
-            />
+            <div className="relative">
+              <textarea
+                required
+                rows={4}
+                placeholder="Descrizione dettagliata..."
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                className={inputClass}
+              />
+            </div>
           </div>
 
           <div>
@@ -318,13 +283,24 @@ const DailyReportForm: React.FC<DailyReportFormProps> = ({ onSubmit }) => {
           </div>
         </div>
 
-        <button
-          type="submit"
-          className="w-full bg-gradient-to-r from-cfs-grey to-gray-800 text-white font-display font-semibold text-lg py-4 rounded-2xl shadow-xl shadow-gray-400/20 hover:shadow-gray-400/40 transform hover:-translate-y-1 transition-all flex items-center justify-center gap-3"
-        >
-          <Save className="w-6 h-6" />
-          Salva Rapportino
-        </button>
+        <div className="flex gap-4">
+          {initialData && onCancelEdit && (
+            <button
+              type="button"
+              onClick={onCancelEdit}
+              className="w-1/3 bg-gray-100 text-gray-700 font-display font-semibold text-lg py-4 rounded-2xl hover:bg-gray-200 transition-colors flex items-center justify-center"
+            >
+              Annulla
+            </button>
+          )}
+          <button
+            type="submit"
+            className={`${initialData ? 'w-2/3' : 'w-full'} bg-gradient-to-r ${initialData ? 'from-green-500 to-green-600' : 'from-cfs-grey to-gray-800'} text-white font-display font-semibold text-lg py-4 rounded-2xl shadow-xl shadow-gray-400/20 hover:shadow-gray-400/40 transform hover:-translate-y-1 transition-all flex items-center justify-center gap-3`}
+          >
+            <Save className="w-6 h-6" />
+            {initialData ? 'Aggiorna Rapportino' : 'Salva Rapportino'}
+          </button>
+        </div>
 
       </form>
     </div>
