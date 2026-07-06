@@ -1,9 +1,16 @@
-import type { CapacitorConfig } from '@capacitor/cli';
+import React from 'react';
+import ReactDOM from 'react-dom/client';
+import App from './App';
+import './index.css';
 
-const config: CapacitorConfig = {
-  appId: 'com.cfs.rapportini',
-  appName: 'CFS Rapportini',
-  webDir: 'dist'
-};
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Could not find root element to mount to");
+}
 
-export default config;
+const root = ReactDOM.createRoot(rootElement);
+root.render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);

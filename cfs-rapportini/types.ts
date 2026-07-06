@@ -1,86 +1,25 @@
-const CACHE_NAME = 'cfs-facility-v3';
-const STATIC_ASSETS = [
-  './',
-  './index.html',
-  './manifest.json',
-  'https://cdn.tailwindcss.com',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap',
-  'https://cdn-icons-png.flaticon.com/512/995/995250.png'
-];
+export type WorkType = 'ordinary' | 'on_call' | 'extraordinary';
 
-// 1. Installazione: Scarica le risorse statiche di base
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      return cache.addAll(STATIC_ASSETS);
-    })
-  );
-  self.skipWaiting();
-});
+export interface DailyReport {
+  id: string;
+  technicianName: string;
+  location: string; // Cantiere/Luogo
+  description: string; // Operazioni eseguite
+  date: string;
+  workType: WorkType;
+  interventionHours: number; // Ore intervento
+  travelHours: number; // Ore viaggio (only for on_call, default 0 for ordinary)
+  photos?: string[]; // Array of base64 strings
+  technicianSignature?: string; // base64 data url
+  clientSignature?: string; // base64 data url
+  createdAt: number;
+}
 
-// 2. Attivazione: Pulisce vecchie cache
-self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
-  self.clients.claim();
-});
-
-// 3. Fetch: Strategia "Cache First, Network Fallback" per le risorse statiche
-// e "Stale While Revalidate" per le librerie esterne (esm.sh)
-self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
-
-  // Gestione specifica per le librerie caricate da ESM.SH o Google Fonts
-  if (url.hostname.includes('esm.sh') || url.hostname.includes('fonts.gstatic.com')) {
-    event.respondWith(
-      caches.open(CACHE_NAME).then((cache) => {
-        return cache.match(event.request).then((response) => {
-          const fetchPromise = fetch(event.request).then((networkResponse) => {
-            // Se la risposta è valida, aggiorna la cache per la prossima volta
-            if (networkResponse && networkResponse.status === 200) {
-              cache.put(event.request, networkResponse.clone());
-            }
-            return networkResponse;
-          }).catch(() => {
-             // Se siamo offline e il fetch fallisce, non fare nulla (speriamo ci sia la cache)
-          });
-          // Restituisci la cache se c'è, altrimenti aspetta la rete
-          return response || fetchPromise;
-        });
-      })
-    );
-    return;
-  }
-
-  // Per le pagine HTML (navigazione) usiamo Network First
-  if (event.request.mode === 'navigate' || event.request.headers.get('accept').includes('text/html')) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
-          return response;
-        })
-        .catch(() => {
-          return caches.match(event.request);
-        })
-    );
-    return;
-  }
-
-  // Per tutto il resto (file locali) usiamo Cache First
-  event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    })
-  );
-});
+export interface SmartExtractResponse {
+  technicianName?: string;
+  location?: string;
+  description?: string;
+  interventionHours?: number;
+  travelHours?: number;
+  workType?: WorkType;
+}
