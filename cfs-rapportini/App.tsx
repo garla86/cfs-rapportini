@@ -8,6 +8,7 @@ import { Share } from '@capacitor/share';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { motion, AnimatePresence } from 'motion/react';
 import { sounds } from './utils/sounds';
+import { get, set } from 'idb-keyval';
 import { Trash2, Copy, Calendar, User, FileDown, CheckCircle, Mail, Archive, FileText, Camera, Download, Upload, Lock, AlertCircle, RefreshCw, ChevronRight, Send, MessageCircle, Plus, Edit2 } from 'lucide-react';
 
 type ViewMode = 'form' | 'history' | 'archive';
@@ -28,14 +29,29 @@ const App: React.FC = () => {
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const saved = localStorage.getItem('cfs_reports');
-    if (saved) {
-      try { setReports(JSON.parse(saved)); } catch (e) { console.error(e); }
-    }
-    const savedSent = localStorage.getItem('cfs_sent_days');
-    if (savedSent) {
-      try { setSentDays(JSON.parse(savedSent)); } catch (e) { console.error(e); }
-    }
+    const loadData = async () => {
+      try {
+        const idbReports = await get('cfs_reports');
+        if (idbReports) {
+          setReports(idbReports);
+        } else {
+          const saved = localStorage.getItem('cfs_reports');
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            setReports(parsed);
+            await set('cfs_reports', parsed);
+          }
+        }
+      } catch (e) {
+        console.error("Error loading reports from indexedDB", e);
+      }
+      
+      const savedSent = localStorage.getItem('cfs_sent_days');
+      if (savedSent) {
+        try { setSentDays(JSON.parse(savedSent)); } catch (e) { console.error(e); }
+      }
+    };
+    loadData();
   }, []);
 
   useEffect(() => {
@@ -56,11 +72,26 @@ const App: React.FC = () => {
     setTimeout(() => setNotification(null), duration);
   };
 
+  const saveReportsToStorage = async (updatedReports: DailyReport[]) => {
+    setReports(updatedReports);
+    try {
+      await set('cfs_reports', updatedReports);
+      try {
+        localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
+      } catch (e) {
+        // Ignore localStorage quota errors
+        console.warn('LocalStorage limit reached, relying only on IndexedDB');
+      }
+    } catch (err) {
+      console.error('Failed to save to IndexedDB', err);
+      showToast('Errore di salvataggio (memoria piena)');
+    }
+  };
+
   const handleSaveReport = (data: Omit<DailyReport, 'id' | 'createdAt'>) => {
     if (reportToEdit) {
       const updatedReports = reports.map(r => r.id === reportToEdit.id ? { ...data, id: r.id, createdAt: r.createdAt } : r);
-      setReports(updatedReports);
-      localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
+      saveReportsToStorage(updatedReports);
       setReportToEdit(null);
       setCurrentView('history');
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -72,8 +103,7 @@ const App: React.FC = () => {
         createdAt: Date.now()
       };
       const updatedReports = [newReport, ...reports];
-      setReports(updatedReports);
-      localStorage.setItem('cfs_reports', JSON.stringify(updatedReports));
+      saveReportsToStorage(updatedReports);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       triggerSuccessAnimation('Intervento salvato!');
     }
@@ -82,8 +112,7 @@ const App: React.FC = () => {
   const handleDelete = (id: string) => {
     if (confirm('Sei sicuro di voler eliminare questo intervento?')) {
       const updated = reports.filter(r => r.id !== id);
-      setReports(updated);
-      localStorage.setItem('cfs_reports', JSON.stringify(updated));
+      saveReportsToStorage(updated);
       showToast('Intervento eliminato.');
       sounds.playDelete();
     }
@@ -370,7 +399,7 @@ const App: React.FC = () => {
       try {
         const parsed = JSON.parse(e.target?.result as string);
         if (Array.isArray(parsed) && parsed.length > 0 && confirm(`Ripristinare ${parsed.length} interventi?`)) {
-          setReports(parsed); localStorage.setItem('cfs_reports', JSON.stringify(parsed)); showToast('Ripristinato!');
+          saveReportsToStorage(parsed); showToast('Ripristinato!');
         }
       } catch { alert("File non valido."); }
       if (backupInputRef.current) backupInputRef.current.value = '';

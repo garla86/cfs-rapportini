@@ -124,22 +124,20 @@ export const generateDailyPdf = (
     const isExtra = report.workType === 'extraordinary';
     
     const descriptionText = isExtra ? "Vedi foglio interventi straordinari" : report.description;
-    const rowTotalHours = (isRep) ? (report.interventionHours + report.travelHours) : report.interventionHours;
 
     if (isRep) {
       totalRepInt += report.interventionHours;
       totalRepTravel += report.travelHours;
+    } else {
+      totalOrdinaryCol += report.interventionHours;
     }
-    
-    // Tutti gli interventi sommano le ore nella colonna ORE principale
-    totalOrdinaryCol += rowTotalHours;
 
     mainDataRows.push([
       report.location,                  
       descriptionText,               
-      rowTotalHours > 0 ? rowTotalHours.toString() : '', // <-- Sempre nella colonna ORE (ordinari, rep, straord)
-      isRep ? report.interventionHours.toString() : '',  // <-- SOLO reperibilità
-      isRep ? report.travelHours.toString() : '',        // <-- SOLO reperibilità
+      (!isRep && report.interventionHours > 0) ? report.interventionHours.toString() : '', 
+      (isRep && report.interventionHours > 0) ? report.interventionHours.toString() : '',  
+      (isRep && report.travelHours > 0) ? report.travelHours.toString() : '',              
       '', '', '', '', '', ''            
     ]);
   });
