@@ -1,67 +1,52 @@
-class AudioSynth {
-  private ctx: AudioContext | null = null;
-  private isEnabled: boolean = true;
+import { GoogleGenAI, Type } from "@google/genai";
+import { SmartExtractResponse } from "../types";
 
-  private getContext() {
-    if (!this.ctx) {
-      if (typeof window !== 'undefined') {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioContextClass) {
-            this.ctx = new AudioContextClass();
+// Initialize only if key exists, otherwise we handle errors gracefully in the UI
+const apiKey = process.env.GEMINI_API_KEY;
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
+
+export const parseInterventionText = async (text: string): Promise<SmartExtractResponse | null> => {
+  if (!ai) {
+    alert("API Key di Gemini non configurata nel sistema.");
+    return null;
+  }
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash", 
+      contents: `Analizza il seguente testo descrittivo di un intervento tecnico ed estrai i dati strutturati.
+      
+      Testo input: "${text}"
+      
+      Regole:
+      - Se si menziona "reperibilità" o "chiamata urgente", workType è 'on_call'.
+      - Se si menziona "straordinario", "extra" o "fuori orario" (non reperibilità), workType è 'extraordinary'.
+      - Altrimenti workType è 'ordinary'.
+      - Estrai le ore di lavoro e le ore di viaggio (se specificate).
+      - Riassumi le operazioni in un linguaggio professionale.
+      - Se mancano dati, lasciali nulli.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            technicianName: { type: Type.STRING, description: "Nome del tecnico se presente" },
+            location: { type: Type.STRING, description: "Luogo o cantiere dell'intervento" },
+            description: { type: Type.STRING, description: "Descrizione tecnica delle operazioni" },
+            interventionHours: { type: Type.NUMBER, description: "Ore di lavoro effettivo" },
+            travelHours: { type: Type.NUMBER, description: "Ore di viaggio (solo se reperibilità)" },
+            workType: { type: Type.STRING, enum: ["ordinary", "on_call", "extraordinary"], description: "Tipo di intervento" }
+          }
         }
       }
+    });
+
+    if (response.text) {
+      return JSON.parse(response.text) as SmartExtractResponse;
     }
-    return this.ctx;
+    return null;
+  } catch (error) {
+    console.error("Error parsing intervention text:", error);
+    return null;
   }
-
-  private playTone(freq: number, type: OscillatorType, duration: number, vol = 0.1, startTimeOffset = 0) {
-    if (!this.isEnabled) return;
-    const ctx = this.getContext();
-    if (!ctx) return;
-    
-    if (ctx.state === 'suspended') {
-      ctx.resume().catch(() => {});
-    }
-
-    try {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        
-        osc.type = type;
-        osc.frequency.setValueAtTime(freq, ctx.currentTime + startTimeOffset);
-        
-        gain.gain.setValueAtTime(vol, ctx.currentTime + startTimeOffset);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startTimeOffset + duration);
-        
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        
-        osc.start(ctx.currentTime + startTimeOffset);
-        osc.stop(ctx.currentTime + startTimeOffset + duration);
-    } catch(e) {
-        // Ignore Audio API errors
-    }
-  }
-
-  public playSuccess() {
-    this.playTone(523.25, 'sine', 0.1, 0.05, 0); // C5
-    this.playTone(659.25, 'sine', 0.1, 0.05, 0.1); // E5
-    this.playTone(783.99, 'sine', 0.3, 0.05, 0.2); // G5
-  }
-
-  public playDelete() {
-    this.playTone(300, 'sawtooth', 0.1, 0.05, 0);
-    this.playTone(200, 'sawtooth', 0.2, 0.05, 0.1);
-  }
-
-  public playPop() {
-    this.playTone(800, 'sine', 0.05, 0.02, 0);
-  }
-
-  public playSlide() {
-    this.playTone(400, 'triangle', 0.05, 0.01, 0);
-    this.playTone(600, 'triangle', 0.05, 0.01, 0.03);
-  }
-}
-
-export const sounds = new AudioSynth();
+};
