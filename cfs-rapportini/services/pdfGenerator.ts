@@ -403,6 +403,17 @@ export const generateDailyPdf = (
     docExtra.rect(MARGIN, footerStart, PRINT_WIDTH, 15);
     docExtra.line(A4_WIDTH / 2, footerStart, A4_WIDTH / 2, footerStart + 15);
 
+    if (extraReport.technicianSignature) {
+      try {
+        docExtra.addImage(extraReport.technicianSignature, 'PNG', MARGIN + 2, footerStart + 1, (PRINT_WIDTH / 2) - 4, 10);
+      } catch (e) { console.error('Error drawing technician signature', e); }
+    }
+    if (extraReport.clientSignature) {
+      try {
+        docExtra.addImage(extraReport.clientSignature, 'PNG', (A4_WIDTH / 2) + 2, footerStart + 1, (PRINT_WIDTH / 2) - 4, 10);
+      } catch (e) { console.error('Error drawing client signature', e); }
+    }
+
     docExtra.setFontSize(8);
     docExtra.text('FIRMA DEL TECNICO', MARGIN + 25, footerStart + 13);
     docExtra.text('FIRMA DEL CLIENTE', (A4_WIDTH / 2) + 25, footerStart + 13);

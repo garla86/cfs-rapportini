@@ -10,6 +10,8 @@ export interface DailyReport {
   interventionHours: number; // Ore intervento
   travelHours: number; // Ore viaggio (only for on_call, default 0 for ordinary)
   photos?: string[]; // Array of base64 strings
+  technicianSignature?: string; // base64 data url
+  clientSignature?: string; // base64 data url
   createdAt: number;
 }
 

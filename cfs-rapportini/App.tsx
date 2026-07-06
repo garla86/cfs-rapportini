@@ -9,6 +9,8 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { motion, AnimatePresence } from 'motion/react';
 import { sounds } from './utils/sounds';
 import { get, set } from 'idb-keyval';
+import { SignatureModal } from './components/SignatureModal';
+import { ShareExtraModal } from './components/ShareExtraModal';
 import { Trash2, Copy, Calendar, User, FileDown, CheckCircle, Mail, Archive, FileText, Camera, Download, Upload, Lock, AlertCircle, RefreshCw, ChevronRight, Send, MessageCircle, Plus, Edit2 } from 'lucide-react';
 
 type ViewMode = 'form' | 'history' | 'archive';
@@ -26,6 +28,10 @@ const App: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState('');
   const [reportToEdit, setReportToEdit] = useState<DailyReport | null>(null);
   
+  const [pendingReportData, setPendingReportData] = useState<Omit<DailyReport, 'id' | 'createdAt'> | null>(null);
+  const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
+  const [extraReportToShare, setExtraReportToShare] = useState<DailyReport | null>(null);
+
   const backupInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -88,25 +94,46 @@ const App: React.FC = () => {
     }
   };
 
-  const handleSaveReport = (data: Omit<DailyReport, 'id' | 'createdAt'>) => {
+  const handleFormSubmit = (data: Omit<DailyReport, 'id' | 'createdAt'>) => {
+    if (data.workType === 'extraordinary') {
+      setPendingReportData(data);
+      setIsSignatureModalOpen(true);
+    } else {
+      handleSaveReport(data);
+    }
+  };
+
+  const handleSaveReport = (data: Omit<DailyReport, 'id' | 'createdAt'>): DailyReport => {
+    let savedReport: DailyReport;
     if (reportToEdit) {
-      const updatedReports = reports.map(r => r.id === reportToEdit.id ? { ...data, id: r.id, createdAt: r.createdAt } : r);
+      savedReport = { ...data, id: reportToEdit.id, createdAt: reportToEdit.createdAt };
+      const updatedReports = reports.map(r => r.id === reportToEdit.id ? savedReport : r);
       saveReportsToStorage(updatedReports);
       setReportToEdit(null);
       setCurrentView('history');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       triggerSuccessAnimation('Intervento aggiornato!');
     } else {
-      const newReport: DailyReport = {
+      savedReport = {
         ...data,
         id: crypto.randomUUID(),
         createdAt: Date.now()
       };
-      const updatedReports = [newReport, ...reports];
+      const updatedReports = [savedReport, ...reports];
       saveReportsToStorage(updatedReports);
       window.scrollTo({ top: 0, behavior: 'smooth' });
       triggerSuccessAnimation('Intervento salvato!');
     }
+    return savedReport;
+  };
+
+  const handleSignatureSave = (techSig?: string, clientSig?: string) => {
+    if (pendingReportData) {
+      const savedReport = handleSaveReport({ ...pendingReportData, technicianSignature: techSig, clientSignature: clientSig });
+      setExtraReportToShare(savedReport);
+    }
+    setIsSignatureModalOpen(false);
+    setPendingReportData(null);
   };
 
   const handleDelete = (id: string) => {
@@ -296,12 +323,19 @@ const App: React.FC = () => {
         const filesToShare = await prepareFilesForSharing();
         if (filesToShare.length === 0) { alert("Errore generazione."); setIsSharing(false); return; }
 
+        let shared = false;
         if (navigator.canShare && navigator.canShare({ files: filesToShare })) {
           try {
             await navigator.share({ files: filesToShare, title: 'Rapportini CFS', text: `Allegati per: ${selectedDays.join(', ')}` });
             showToast('Inviato!'); markAsSent(selectedDays);
-          } catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
-        } else {
+            shared = true;
+          } catch (e) {
+            if ((e as Error).name === 'AbortError') return;
+            console.error("Native share failed, falling back to download", e);
+          }
+        } 
+        
+        if (!shared) {
           downloadFilesLocally(filesToShare);
           const subject = encodeURIComponent("Rapportini CFS");
           const body = encodeURIComponent(`Rapportini per: ${selectedDays.join(', ')}.`);
@@ -370,10 +404,20 @@ const App: React.FC = () => {
         const files = await prepareFilesForSharing();
         if (files.length === 0) { alert("Errore."); setIsSharing(false); return; }
 
+        let shared = false;
         if (navigator.canShare && navigator.canShare({ files })) {
-           try { await navigator.share({ files, text: msg }); showToast('Fatto!'); markAsSent(selectedDays); }
-           catch (e) { if ((e as Error).name !== 'AbortError') throw new Error("SharingFailed"); }
-        } else {
+           try { 
+             await navigator.share({ files, text: msg }); 
+             showToast('Fatto!'); 
+             markAsSent(selectedDays); 
+             shared = true;
+           } catch (e) { 
+             if ((e as Error).name === 'AbortError') return;
+             console.error("Native share failed, falling back to download", e);
+           }
+        } 
+        
+        if (!shared) {
            downloadFilesLocally(files);
            window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
            alert("File scaricati. Trascinali su WhatsApp.");
@@ -467,7 +511,7 @@ const App: React.FC = () => {
               <p className="text-gray-500">Compila i dettagli o usa l'AI per velocizzare.</p>
             </div>
             <DailyReportForm 
-              onSubmit={handleSaveReport} 
+              onSubmit={handleFormSubmit} 
               initialData={reportToEdit || undefined}
               onCancelEdit={reportToEdit ? () => { setReportToEdit(null); setCurrentView('history'); window.scrollTo({ top: 0, behavior: 'smooth' }); } : undefined}
             />
@@ -755,6 +799,17 @@ const App: React.FC = () => {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <SignatureModal
+        isOpen={isSignatureModalOpen}
+        onClose={() => setIsSignatureModalOpen(false)}
+        onSave={handleSignatureSave}
+      />
+
+      <ShareExtraModal
+        report={extraReportToShare}
+        onClose={() => setExtraReportToShare(null)}
+      />
     </div>
   );
 };
